@@ -54,7 +54,7 @@ BOT_MEDIA = ("photo", "video", "animation", "voice", "video_note", "audio", "doc
 # session_report.py writes to the owner when a Claude Code session worked at least report_min_minutes since the last
 # prompt (None: never), with Claude's last message shortened by report_model on the subscription (None: cut instead).
 DEFAULT_SETTINGS = {"model": "claude-sonnet-5", "effort": "medium", "daily_limit": 10, "web_searches_per_question": 1,
-                    "owner_route": "subscription", "owner_model": "fable", "owner_effort": "medium",
+                    "owner_route": "subscription", "owner_model": "opus", "owner_effort": "medium",
                     "owner_tiers": {"simple": "sonnet", "medium": "opus", "hard": "fable"},
                     "report_min_minutes": 3, "report_model": "haiku"}
 # Claude API list prices in dollars per million input and output tokens, for the estimate the bot reports. Web

@@ -356,7 +356,7 @@ async def responder_checks():
     check("a tag inside the question is taken out without leaving a gap",
           subscription.questions[-1][0].endswith("Question: сколько лун у Юпитера?"), subscription.questions[-1][0][-60:])
     await send(message(oleg, "а без тега?"))
-    check("without a tag the owner's model is the default", subscription.settings[-1]["owner_model"] == "fable",
+    check("without a tag the owner's model is the default", subscription.settings[-1]["owner_model"] == "opus",
           subscription.settings[-1].get("owner_model"))
     tagged = "@family_bot #hard что это?"
     await send(message(masha, tagged, FAMILY, mention(tagged)))
@@ -825,8 +825,8 @@ async def subscription_checks():
                                                           "cache_creation_input_tokens": 100,
                                                           "cache_read_input_tokens": 50, "web_searches": 2},
               (text, used))
-        check("Claude Code runs headless with Fable at medium effort, the question on stdin",
-              arguments[:2] == ["claude.exe", "-p"] and after(arguments, "--model") == "fable"
+        check("Claude Code runs headless with Opus at medium effort, the question on stdin",
+              arguments[:2] == ["claude.exe", "-p"] and after(arguments, "--model") == "opus"
               and after(arguments, "--effort") == "medium" and after(arguments, "--output-format") == "json"
               and after(arguments, "--system-prompt") == "system" and run["stdin"] == "вопрос", arguments)
         check("in a group it gets the web tools and all four of our tools, no other MCP, no prompts, no session",

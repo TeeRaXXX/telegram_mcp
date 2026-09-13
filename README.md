@@ -100,7 +100,7 @@ Asked in a group, one-on-one chats stay out of reach, since the whole group read
   and the automatic one on the growing conversation, which each step reads at a tenth of the price. The log shows
   what came from the cache and what went into it.
 - **You** are answered by Claude Code on your own Claude subscription (`owner_route: "subscription"`) with
-  `owner_model` (`fable`) at `owner_effort`. It runs `claude -p` - one on PATH, else the Claude desktop app's copy. The
+  `owner_model` (`opus`) at `owner_effort`. It runs `claude -p` - one on PATH, else the Claude desktop app's copy. The
   app is an MSIX package, so that copy is in `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code`;
   only the app and what it starts see it as `%APPDATA%\Claude\claude-code`, and the autostart task does not. It
   runs in an empty folder under `data\claude-work`, with `--tools WebSearch,WebFetch`, `--strict-mcp-config` and
