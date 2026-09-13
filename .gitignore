@@ -1,0 +1,11 @@
+# Logins, tokens, the people the bot answers, what it saw, usage, logs and every cache: never in the repository.
+data/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.log
+
+# Personal: the greeting names the owner - greeting.example.txt is the one kept here.
+greeting.txt
+local_hooks.py
