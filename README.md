@@ -88,7 +88,13 @@ the bot itself, without Claude, so looking through the chat costs nothing. Every
 - `send_image`, for your requests only: post a GIF or a picture from the web into the chat of the question. The bot
   downloads the file itself - only from a public address, never a host on this computer or its network, and only a
   JPEG, PNG, WebP, GIF or MP4 - and uploads it with sendPhoto or sendAnimation. Photos looked at and pictures posted
-  stay in memory and are never written to disk.
+  stay in memory and are never written to disk;
+- `find_files` and `send_file`, for your requests only: find a file on this computer by words of its name and post it
+  into the chat of the question as a document, up to 50 MB. It looks through your Desktop, Documents, Downloads,
+  Pictures, Videos, Music and OneDrive folders and every local drive but the system one, shallow folders first, for
+  at most 20 seconds a search. Whatever may keep logins or keys is never listed or sent: a folder or file whose name
+  starts with a dot or `$`, `AppData`, Telegram Desktop's `tdata`, this project's own folder, key and session files
+  (`.pem`, `.key`, `.pfx`, `.kdbx`, `.session`, `id_rsa`...). Every file sent is written down in `data\files_sent.log`.
 
 Asked in a group, one-on-one chats stay out of reach, since the whole group reads the answer.
 

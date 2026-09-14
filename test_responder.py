@@ -30,7 +30,7 @@ for attribute, file_name in (("ME_FILE", "me.json"), ("BOT_FILE", "bot.json"), (
                              ("OFFSET_FILE", "bot_offset.json"), ("CLAUDE_TOKEN_FILE", "claude_token.json"),
                              ("CLAUDE_WORK", "claude-work"), ("CLAUDE_CONFIG", "claude-config"),
                              ("REPORTS_FILE", "session_reports.json"), ("REPORT_LOG", "session_report.log"),
-                             ("REMINDERS_FILE", "reminders.json")):
+                             ("REMINDERS_FILE", "reminders.json"), ("FILES_LOG", "files_sent.log")):
     setattr(common, attribute, TEMP / file_name)
 
 import responder  # noqa: E402
@@ -38,6 +38,7 @@ import server  # noqa: E402
 import chatsearch  # noqa: E402
 import reminders  # noqa: E402
 import session_report  # noqa: E402
+import localfiles  # noqa: E402
 from chatsearch import BotWriter, Pictures, Scope, TelegramSearch  # noqa: E402
 from mcp.server.mcpserver.exceptions import ToolError  # noqa: E402
 from telethon import functions, types  # noqa: E402
@@ -868,7 +869,8 @@ async def subscription_checks():
               after(runs[-1]["arguments"], "--allowedTools") == "WebSearch,WebFetch,mcp__chats__search_chats,"
                                                                 "mcp__chats__read_chat_history,mcp__chats__read_voice,mcp__chats__view_photo,"
                                                                 "mcp__chats__set_reminder,mcp__chats__list_reminders,"
-                                                                "mcp__chats__cancel_reminder,mcp__chats__send_image"
+                                                                "mcp__chats__cancel_reminder,mcp__chats__send_image,"
+                                                                "mcp__chats__find_files,mcp__chats__send_file"
               and runs[-1]["scope"]["origin"]["chat_id"] == OWNER, (runs[-1]["arguments"], runs[-1]["scope"]))
 
         common.save_json(common.CLAUDE_TOKEN_FILE, {"token": "token-from-setup"})
@@ -1444,6 +1446,132 @@ async def picture_checks():
           "view_photo" in names and "send_image" not in names, names)
 
 
+async def file_checks():
+    common.save_json(common.ACCESS_FILE, {"owner_id": OWNER, "allowed": {str(MASHA): {"name": "Маша"}}})
+    disk, outside = (TEMP / "disk").resolve(), (TEMP / "outside").resolve()
+    pdf = b"%PDF-1.4 resume"
+    now = time.time()
+    layout = {"Резюме Олег.pdf": (pdf, now), "big резюме.zip": (b"0" * 64, now - 3600),
+              "empty резюме.txt": (b"", now - 7200), "old/резюме-старое.pdf": (pdf, now - 7 * 86400),
+              "old/deeper/notes.txt": (b"notes", now), ".hidden/резюме.pdf": (pdf, now), "AppData/резюме.pdf": (pdf, now),
+              "keys/резюме.pem": (b"key", now)}
+    for name, (data, modified) in layout.items():
+        path = disk / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        os.utime(path, (modified, modified))
+    outside.mkdir(parents=True, exist_ok=True)
+    (outside / "резюме.pdf").write_bytes(pdf)
+    files = localfiles.LocalFiles("123:fake", where=lambda: [disk])
+    owner_origin = {"chat_id": FAMILY["id"], "topic_id": 42, "message_id": 700, "asker_id": OWNER, "asker_name": "Олег"}
+    owner_here = Scope(everything=True, private=False, current=FAMILY["id"], origin=owner_origin)
+    masha_here = Scope(chats={FAMILY["id"]: "Семья"}, private=False, current=FAMILY["id"],
+                       origin={**owner_origin, "asker_id": MASHA, "asker_name": "Маша"})
+
+    def names_of(found):
+        return [Path(item["path"]).relative_to(disk).as_posix() for item in found.get("files", [])]
+
+    found = await files.find(owner_here, "РЕЗЮМЕ")
+    check("the owner finds files by a word of the name in any case, newest first - none in a hidden folder, AppData or "
+          "a key file", names_of(found) == ["Резюме Олег.pdf", "big резюме.zip", "empty резюме.txt",
+                                            "old/резюме-старое.pdf"] and found["looked_in"] == [str(disk)], found)
+    check("every word must be in the name, and a word may be the extension",
+          names_of(await files.find(owner_here, "резюме pdf")) == ["Резюме Олег.pdf", "old/резюме-старое.pdf"])
+    check("a word may list alternatives with |, one search for all of them",
+          names_of(await files.find(owner_here, "cv|РЕЗЮМЕ pdf|txt")) == ["Резюме Олег.pdf", "empty резюме.txt",
+                                                                          "old/резюме-старое.pdf"]
+          and localfiles.terms("резюме|*cv* pdf|") == [("резюме", "cv"), ("pdf",)])
+    in_old = await files.find(owner_here, "резюме", str(disk / "old"))
+    check("a folder narrows the search to itself and the folders in it", names_of(in_old) == ["old/резюме-старое.pdf"],
+          in_old)
+    check("a folder outside the places or a hidden one is refused",
+          "outside" in (await files.find(owner_here, "резюме", str(outside))).get("error", "")
+          and "error" in await files.find(owner_here, "резюме", str(disk / ".hidden")))
+    check("a search out of time says so", localfiles.walk([str(disk)], [("резюме",)], -1) == ([], "time"))
+    check("nothing in the bot's own folder is ever sent - its logins are there",
+          localfiles.closed(common.ROOT / "data" / "me.json", common.ROOT.parent) is not None)
+    places = localfiles.places()
+    check("by default it looks in the owner's folders and the local drives but the system one, each once",
+          places and all(place.is_dir() for place in places) and len(set(places)) == len(places)
+          and Path(os.environ.get("SystemDrive", "C:") + os.sep) not in places, places)
+
+    body, _ = common.multipart({}, "document", 'Резюме "Олег"\r\n.pdf', b"x", "application/pdf")
+    check("a file's own name goes into the form as UTF-8, with quotes and line breaks escaped",
+          'filename="Резюме %22Олег%22%0D%0A.pdf"'.encode() in body, body[:300])
+
+    uploads = []
+
+    def fake_upload(token, method, params, field, filename, data, content_type, timeout=120):
+        uploads.append((method, params, field, filename, data, content_type))
+        return {"message_id": 960 + len(uploads), "date": int(time.time()),
+                "chat": {"id": params["chat_id"], "type": "supergroup", "title": "Семья"},
+                "from": {"id": 1, "is_bot": True, "first_name": "Робин"}, "document": {"file_name": filename}}
+
+    real_upload, real_bytes = common.bot_upload, localfiles.FILE_BYTES
+    common.bot_upload = fake_upload
+    try:
+        posted = await files.send(owner_here, str(disk / "Резюме Олег.pdf"), "Моё резюме")
+        sent = uploads[-1] if uploads else (None, {}, None, None, None, None)
+        check("a file the owner asks for is posted as a document under its own name into the topic, as a reply",
+              posted.get("posted") and sent[0] == "sendDocument" and sent[2] == "document"
+              and sent[3] == "Резюме Олег.pdf" and sent[4] == pdf and sent[5] == "application/pdf"
+              and sent[1]["chat_id"] == FAMILY["id"] and sent[1]["message_thread_id"] == 42
+              and sent[1]["reply_parameters"]["message_id"] == 700 and sent[1]["caption"] == "Моё резюме",
+              (posted, sent[:4]))
+        logged = common.FILES_LOG.read_text(encoding="utf-8") if common.FILES_LOG.exists() else ""
+        check("every file posted is written down with where it went",
+              str(disk / "Резюме Олег.pdf") in logged and f"chat {FAMILY['id']} topic 42" in logged, logged)
+        refusals = {}
+        for name, path in (("hidden", disk / ".hidden" / "резюме.pdf"), ("appdata", disk / "AppData" / "резюме.pdf"),
+                           ("key", disk / "keys" / "резюме.pem"), ("outside", outside / "резюме.pdf"),
+                           ("missing", disk / "нет.pdf"), ("folder", disk / "old"),
+                           ("empty", disk / "empty резюме.txt"), ("bare name", "Резюме Олег.pdf")):
+            refusals[name] = await files.send(owner_here, str(path))
+        check("a hidden folder, AppData, a key, a file outside the places, a missing file, a folder, an empty file and a "
+              "bare name are refused, and nothing is posted",
+              all("error" in result for result in refusals.values()) and len(uploads) == 1, refusals)
+        localfiles.FILE_BYTES = 10
+        too_big = await files.send(owner_here, str(disk / "big резюме.zip"))
+        check("a file larger than a bot may send is refused", "at most" in too_big.get("error", "") and len(uploads) == 1,
+              too_big)
+        localfiles.FILE_BYTES = real_bytes
+        check("nobody but the owner has files found or posted, and a question from no chat has none",
+              "error" in await files.send(masha_here, str(disk / "Резюме Олег.pdf"))
+              and "error" in await files.find(masha_here, "резюме")
+              and "error" in await files.find(Scope(everything=True), "резюме") and len(uploads) == 1)
+    finally:
+        common.bot_upload, localfiles.FILE_BYTES = real_upload, real_bytes
+
+    class RecordingFiles:
+        def __init__(self):
+            self.calls = []
+
+        async def find(self, scope, query, folder=None):
+            self.calls.append(("find", query, folder))
+            return {"files": [{"path": "G:/docs/Резюме.pdf", "size": 15, "modified": "2026-09-14 10:00"}]}
+
+        async def send(self, scope, path, caption=None):
+            self.calls.append(("send", path, caption))
+            return {"posted": True, "message_id": 970}
+
+    asks = FakeMessages([
+        reply("tool_use", block(type="tool_use", id="f1", name="find_files", input={"query": "резюме"}),
+              block(type="tool_use", id="f2", name="send_file", input={"path": "G:/docs/Резюме.pdf"})),
+        reply("end_turn", block(type="text", text="Скинул резюме."))])
+    recording = RecordingFiles()
+    await responder.Answerer(SimpleNamespace(beta=SimpleNamespace(messages=asks)), RecordingSearch(), "system", None,
+                             None, recording).answer("скинь резюме", owner_here, dict(common.DEFAULT_SETTINGS))
+    names = [tool["name"] for tool in asks.calls[0]["tools"]]
+    check("the owner's question gets find_files and send_file, and Claude's calls reach them",
+          names[-2:] == ["find_files", "send_file"]
+          and recording.calls == [("find", "резюме", None), ("send", "G:/docs/Резюме.pdf", "")], (names, recording.calls))
+    masha_asks = FakeMessages([reply("end_turn", block(type="text", text="ok"))])
+    await responder.Answerer(SimpleNamespace(beta=SimpleNamespace(messages=masha_asks)), RecordingSearch(), "system",
+                             None, None, recording).answer("скинь резюме", masha_here, dict(common.DEFAULT_SETTINGS))
+    names = [tool["name"] for tool in masha_asks.calls[0]["tools"]]
+    check("someone else's question gets neither", "find_files" not in names and "send_file" not in names, names)
+
+
 class VoiceScopes(FakeScopes):
     """FakeScopes that also transcribe voice messages, from a table of what each one says."""
 
@@ -1556,6 +1684,7 @@ async def main():
     await inline_checks()
     await reminder_checks()
     await picture_checks()
+    await file_checks()
     await voice_checks()
     await report_checks()
     await sdk_checks()

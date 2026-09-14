@@ -2,8 +2,8 @@
 """The chat tools for Claude Code when it answers the owner's questions on the subscription: search_chats and
 read_chat_history over the owner's Telegram chats - with no date limit, since the scope responder.py writes for these
 questions is a deep one - post_message and edit_bot_message for the bot in the group the question came from, and
-set_reminder, list_reminders and cancel_reminder for the chat it came from, all kept inside the scope written for that
-one question.
+set_reminder, list_reminders and cancel_reminder for the chat it came from, and find_files and send_file for a file
+from the owner's computer to post there, all kept inside the scope written for that one question.
 
     .venv/Scripts/python.exe search_mcp.py --scope <scope file>
 """
@@ -24,6 +24,7 @@ from chatsearch import (EDIT_MESSAGE_DESCRIPTION, FOUND_KEPT_DEEP, HISTORY_DEEP_
                         POST_MESSAGE_DESCRIPTION, READ_VOICE_DESCRIPTION, SEARCH_CHATS_DEEP_DESCRIPTION,
                         SEND_IMAGE_DESCRIPTION, VIEW_PHOTO_DESCRIPTION, BotWriter, Pictures, Scope, TelegramSearch,
                         connect_personal)
+from localfiles import FIND_FILES_DESCRIPTION, SEND_FILE_DESCRIPTION, LocalFiles
 
 mcp = MCPServer("chats", log_level="WARNING")
 _search = None
@@ -54,6 +55,10 @@ def writer():
 
 async def pictures():
     return Pictures((common.load_json(common.BOT_FILE) or {}).get("token"), await searcher())
+
+
+def files():
+    return LocalFiles((common.load_json(common.BOT_FILE) or {}).get("token"))
 
 
 def dump(value):
@@ -146,6 +151,22 @@ async def send_image(
     caption: Annotated[str | None, Field(description="A short caption")] = None,
 ) -> str:
     return dump(await (await pictures()).send(scope(), url, caption))
+
+
+@mcp.tool(description=FIND_FILES_DESCRIPTION, structured_output=False)
+async def find_files(
+    query: Annotated[str, Field(description="One or two words of the file's name")],
+    folder: Annotated[str | None, Field(description="Only this folder and the folders in it")] = None,
+) -> str:
+    return dump(await files().find(scope(), query, folder))
+
+
+@mcp.tool(description=SEND_FILE_DESCRIPTION, structured_output=False)
+async def send_file(
+    path: Annotated[str, Field(description="The file's full path, as find_files gave it")],
+    caption: Annotated[str | None, Field(description="A short caption")] = None,
+) -> str:
+    return dump(await files().send(scope(), path, caption))
 
 
 @mcp.tool(description=reminders.SET_REMINDER_DESCRIPTION, structured_output=False)

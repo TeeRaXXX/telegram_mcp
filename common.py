@@ -37,6 +37,7 @@ CLAUDE_CONFIG = DATA / "claude-config"
 REPORTS_FILE = DATA / "session_reports.json"
 REPORT_LOG = DATA / "session_report.log"
 REMINDERS_FILE = DATA / "reminders.json"
+FILES_LOG = DATA / "files_sent.log"
 
 # What Telegram shows under Settings > Devices for the personal account's session, so it can be found and
 # ended there.
@@ -122,7 +123,7 @@ def bot_request(token, method, params=None, timeout=30):
 
 
 def bot_upload(token, method, params, field, filename, data, content_type, timeout=120):
-    """Call a Bot API method that sends a file - sendPhoto, sendAnimation - with the file in field."""
+    """Call a Bot API method that sends a file - sendPhoto, sendAnimation, sendDocument - with the file in field."""
     body, form_type = multipart(params, field, filename, data, content_type)
     return bot_send(token, method, body, form_type, timeout)
 
@@ -131,6 +132,8 @@ def multipart(params, field, filename, data, content_type):
     """A multipart/form-data body and its content type: params as fields - anything but a string as JSON, None left
     out - and one file."""
     boundary = uuid.uuid4().hex
+    # The file's own name goes into the header as UTF-8, with what would end the quoted name escaped, as browsers do.
+    filename = filename.replace('"', "%22").replace("\r", "%0D").replace("\n", "%0A")
     parts = []
     for name, value in params.items():
         if value is None:
