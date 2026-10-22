@@ -19,7 +19,7 @@ people. 'login.py claude' gives Claude Code a token and a config directory of it
 not come along. Added to a group by the owner or someone on the list, it posts greeting.txt there.
 
 The owner's questions on the subscription read chat history with no date limit, and a #simple, #medium or #hard in
-one of them picks its model (settings "owner_tiers": sonnet, opus, fable) - anyone else's hashtag is only text. The owner can also ask from any
+one of them picks its model (settings "owner_tiers": sonnet, claude-opus-5-5, fable) - anyone else's hashtag is only text. The owner can also ask from any
 one-on-one chat through inline mode - "@bot question", then the one result - and the answer replaces the message that
 result posts; nobody else gets inline results. That needs Inline Mode and Inline Feedback on in @BotFather (/setinline,
 /setinlinefeedback); without the feedback the owner presses the posted message's button to start the answer.
@@ -39,6 +39,7 @@ Commands, obeyed only from the owner:
 
 import asyncio
 import base64
+import functools
 import hashlib
 import html
 import json
@@ -103,6 +104,15 @@ You are {bot_name}, a Telegram bot that answers questions for {owner_name} and t
 
 You reply inside a Telegram chat, so answer the way a well-informed friend would write back: short and to the point, \
 in the language of the question. Telegram shows your answer as plain text, so write no Markdown, headings or tables.
+
+Write like a person, not like a chatbot. No flattering openers ("Great question!", «Отличный вопрос!», «Конечно! \
+Вот…») and no closing offers or wishes ("Hope this helps", «Если хотите, я могу…», «Обращайтесь!»): stop once the \
+answer is given. Avoid the words people take for AI: delve, tapestry, testament, pivotal, crucial, seamless, vibrant; \
+in Russian «стоит отметить», «давайте разберёмся», «играет ключевую роль», «в современном мире», «важно понимать», \
+and «является» where «это» or a plain verb works. No "not X, but Y" or «не просто X, а Y» contrasts, no lists of three \
+out of habit, no summing-up line at the end, no gushing or advertising tone, no vague «эксперты считают». Give the \
+concrete thing - a name, a number, a place, a date - and an opinion when one is asked for. Vary the length of \
+sentences, and punctuate as people do: a dash now and then, not in every sentence.
 
 Search the web for anything current or checkable and name one or two source links. When the question is about \
 something written or shared in Telegram, find it with search_chats; when it is about a chat itself - what was \
@@ -682,21 +692,53 @@ def version_key(name):
     return tuple(int(part) if part.isdigit() else 0 for part in re.split(r"[.\-]", name))
 
 
+@functools.cache
+def reported_version(executable, modified):
+    """The version a Claude Code executable reports, as version_key gives it; () when it reports none. modified is the
+    file's time, so that a copy updated in place is asked again."""
+    try:
+        done = subprocess.run([executable, "--version"], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              timeout=30, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    except (OSError, subprocess.SubprocessError):
+        return ()
+    found = re.search(r"\d+(?:\.\d+)+", done.stdout or "")
+    return version_key(found.group()) if found else ()
+
+
 def claude_code():
-    """The Claude Code executable: one on PATH, else the newest the Claude desktop app keeps. The app is an MSIX
-    package, so its copy really lives in the package's LocalCache; Roaming/Claude/claude-code is only how the app and
-    the processes it starts see that folder, and a scheduled task does not see it there."""
-    found = shutil.which("claude")
-    if found:
-        return found
+    """The newest Claude Code on this computer: the one on PATH or one the Claude desktop app keeps, whichever has the
+    higher version. A copy on PATH that stopped updating would otherwise hold the bot back from a model it does not
+    know yet - 2.1.272 there refused Opus 5.5, which the app's 2.1.280 runs. The app is an MSIX package, so its copies
+    really live in the package's LocalCache; Roaming/Claude/claude-code is only how the app and the processes it
+    starts see that folder, and a scheduled task does not see it there.
+
+    Each version is a folder named for it. The app used to put claude.exe straight in it; since 2.1.286 it puts it one
+    folder deeper, `<version>/<hash>/claude.exe`, beside a `.verified` file it writes once the download checks out -
+    and the bot, finding neither under the old pattern, went back to 2.1.272 on PATH, which refused Opus 5.5
+    (2026-10-11). A copy one folder deeper counts only when its `.verified` is there, so that a download still in
+    progress is never run. Later versions of the app keep the version folders in an ordinary folder outside the
+    package, Local/Claude-Data/claude_<id>/claude-code, which a scheduled task sees as it is; finding nothing in the
+    old places, the bot went back to 2.1.272 again (2026-10-22)."""
     home = Path.home()
     folders = [*(home / "AppData" / "Local" / "Packages").glob("Claude_*/LocalCache/Roaming/Claude/claude-code"),
+               *(home / "AppData" / "Local" / "Claude-Data").glob("claude_*/claude-code"),
                home / "AppData" / "Roaming" / "Claude" / "claude-code"]
     if os.environ.get("APPDATA"):
         folders.append(Path(os.environ["APPDATA"]) / "Claude" / "claude-code")
-    candidates = [path for folder in folders for path in folder.glob("*/claude.exe")]
-    candidates.sort(key=lambda path: version_key(path.parent.name), reverse=True)
-    return str(candidates[0]) if candidates else None
+    candidates = []
+    for folder in folders:
+        for path in folder.glob("*/claude.exe"):
+            candidates.append((version_key(path.parent.name), str(path)))
+        for path in folder.glob("*/*/claude.exe"):
+            if (path.parent / ".verified").exists():
+                candidates.append((version_key(path.parent.parent.name), str(path)))
+    on_path = shutil.which("claude")
+    if on_path:
+        try:
+            candidates.append((reported_version(on_path, os.path.getmtime(on_path)), on_path))
+        except OSError:
+            pass
+    return max(candidates)[1] if candidates else None
 
 
 def python_for_mcp():

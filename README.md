@@ -106,7 +106,9 @@ Asked in a group, one-on-one chats stay out of reach, since the whole group read
   and the automatic one on the growing conversation, which each step reads at a tenth of the price. The log shows
   what came from the cache and what went into it.
 - **You** are answered by Claude Code on your own Claude subscription (`owner_route: "subscription"`) with
-  `owner_model` (`opus`) at `owner_effort`. It runs `claude -p` - one on PATH, else the Claude desktop app's copy. The
+  `owner_model` (`claude-opus-5-5`, Opus 5.5, which needs Claude Code 2.1.280 or newer) at `owner_effort`. It runs
+  `claude -p` - the newest of the one on PATH and the Claude desktop app's copies, so a copy on PATH that stopped
+  updating does not hold it back. The
   app is an MSIX package, so that copy is in `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code`;
   only the app and what it starts see it as `%APPDATA%\Claude\claude-code`, and the autostart task does not. It
   runs in an empty folder under `data\claude-work`, with `--tools WebSearch,WebFetch`, `--strict-mcp-config` and
@@ -125,7 +127,7 @@ A subscription is for its owner alone, so nobody else's question ever goes throu
 - `data\access.json` holds `owner_id`, `allowed` (user id -> name, `added`, an optional `daily_limit`) and
   `settings`: `model`, `effort`, `daily_limit` (10 questions a day per person; you have none),
   `web_searches_per_question`, `owner_route`, `owner_model`, `owner_effort`, `owner_tiers` - the model a `#simple`, `#medium` or `#hard` in
-  your own question picks (`sonnet`, `opus`, `fable`; anyone else's hashtag is only text) - and `report_min_minutes` and
+  your own question picks (`sonnet`, `claude-opus-5-5`, `fable`; anyone else's hashtag is only text) - and `report_min_minutes` and
   `report_model` for the session reports below. The responder reads it for every
   question, so a change needs no restart.
 - Commands, obeyed only from you: `/allow` as a reply to someone's message (or `/allow <user id>`,

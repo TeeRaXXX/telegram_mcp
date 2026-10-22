@@ -347,7 +347,7 @@ async def responder_checks():
     check("group chatter not meant for the bot is not kept; a question to it is",
           chatter["message_id"] not in kept and asked["message_id"] in kept, sorted(kept))
 
-    for tag, model in (("#simple", "sonnet"), ("#medium", "opus"), ("#HARD", "fable")):
+    for tag, model in (("#simple", "sonnet"), ("#medium", "claude-opus-5-5"), ("#HARD", "fable")):
         await send(message(oleg, f"{tag} сколько планет в солнечной системе?"))
         check(f"the owner's {tag} picks {model}, and the tag is not part of the question",
               subscription.settings[-1]["owner_model"] == model
@@ -357,7 +357,7 @@ async def responder_checks():
     check("a tag inside the question is taken out without leaving a gap",
           subscription.questions[-1][0].endswith("Question: сколько лун у Юпитера?"), subscription.questions[-1][0][-60:])
     await send(message(oleg, "а без тега?"))
-    check("without a tag the owner's model is the default", subscription.settings[-1]["owner_model"] == "opus",
+    check("without a tag the owner's model is the default", subscription.settings[-1]["owner_model"] == "claude-opus-5-5",
           subscription.settings[-1].get("owner_model"))
     tagged = "@family_bot #hard что это?"
     await send(message(masha, tagged, FAMILY, mention(tagged)))
@@ -365,9 +365,12 @@ async def responder_checks():
           api.settings[-1]["model"] == "claude-sonnet-5" and "Question: #hard что это?" in api.questions[-1][0],
           api.questions[-1][0][-60:])
     common.change_access(lambda access: access["settings"].update(owner_route="api"))
+    await send(message(oleg, "#hard а через API?"))
+    picked = [api.settings[-1].get("model")]
     await send(message(oleg, "#medium а через API?"))
-    check("on the API route the owner's tag picks the API model", api.settings[-1]["model"] == "claude-opus-5",
-          api.settings[-1].get("model"))
+    picked.append(api.settings[-1].get("model"))
+    check("on the API route the owner's tag picks the API model: an alias becomes its API id, a full id stays",
+          picked == ["claude-fable-5-1", "claude-opus-5-5"], picked)
     common.change_access(lambda access: access["settings"].update(owner_route="subscription"))
 
     class PollingBot(FakeBot):
@@ -827,7 +830,7 @@ async def subscription_checks():
                                                           "cache_read_input_tokens": 50, "web_searches": 2},
               (text, used))
         check("Claude Code runs headless with Opus at medium effort, the question on stdin",
-              arguments[:2] == ["claude.exe", "-p"] and after(arguments, "--model") == "opus"
+              arguments[:2] == ["claude.exe", "-p"] and after(arguments, "--model") == "claude-opus-5-5"
               and after(arguments, "--effort") == "medium" and after(arguments, "--output-format") == "json"
               and after(arguments, "--system-prompt") == "system" and run["stdin"] == "вопрос", arguments)
         check("in a group it gets the web tools and all four of our tools, no other MCP, no prompts, no session",
@@ -914,6 +917,52 @@ async def subscription_checks():
         os.environ.pop("ANTHROPIC_BASE_URL", None)
         os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
     check("the desktop app keeps a Claude Code this finds", bool(responder.claude_code()), responder.claude_code())
+
+    real_which, real_reported = responder.shutil.which, responder.reported_version
+    real_profile, real_appdata = os.environ.get("USERPROFILE"), os.environ.pop("APPDATA", None)
+    home = TEMP / "home"
+    app = home / "AppData" / "Local" / "Packages" / "Claude_test" / "LocalCache" / "Roaming" / "Claude" / "claude-code"
+    # 2.1.275 the old way, straight in its version's folder; 2.1.280 the way the app keeps them since 2.1.286, one
+    # folder deeper and verified; 2.1.299 one folder deeper but not verified yet - a download still running.
+    (app / "2.1.275").mkdir(parents=True, exist_ok=True)
+    (app / "2.1.275" / "claude.exe").write_bytes(b"")
+    for version, verified in (("2.1.280", True), ("2.1.299", False)):
+        (app / version / "0123abcd").mkdir(parents=True, exist_ok=True)
+        (app / version / "0123abcd" / "claude.exe").write_bytes(b"")
+        if verified:
+            (app / version / "0123abcd" / ".verified").write_bytes(b"")
+    on_path = home / ".local" / "bin" / "claude.exe"
+    on_path.parent.mkdir(parents=True, exist_ok=True)
+    on_path.write_bytes(b"")
+    reported, chosen = {}, []
+    responder.shutil.which = lambda name: str(on_path)
+    responder.reported_version = lambda executable, modified: reported.get(executable, ())
+    try:
+        os.environ["USERPROFILE"] = str(home)
+        for version in ("2.1.272", "2.1.290", None):
+            reported.clear()
+            if version:
+                reported[str(on_path)] = responder.version_key(version)
+            chosen.append(responder.claude_code())
+        os.environ["USERPROFILE"] = str(TEMP / "no-app")
+        chosen.append(responder.claude_code())
+        os.environ["USERPROFILE"] = str(home)
+        data = home / "AppData" / "Local" / "Claude-Data" / "claude_test" / "claude-code" / "2.1.304" / "aed62990"
+        data.mkdir(parents=True, exist_ok=True)
+        (data / "claude.exe").write_bytes(b"")
+        (data / ".verified").write_bytes(b"")
+        reported[str(on_path)] = responder.version_key("2.1.290")
+        chosen.append(responder.claude_code())
+    finally:
+        responder.shutil.which, responder.reported_version = real_which, real_reported
+        if real_profile is not None:
+            os.environ["USERPROFILE"] = real_profile
+        if real_appdata is not None:
+            os.environ["APPDATA"] = real_appdata
+    newest = str(app / "2.1.280" / "0123abcd" / "claude.exe")
+    check("the newest Claude Code wins - the desktop app's, in its package or in Claude-Data, or the one on PATH - and "
+          "an old copy on PATH does not hold the bot back from a new model",
+          chosen == [newest, str(on_path), newest, str(on_path), str(data / "claude.exe")], chosen)
 
 
 async def tool_checks():
