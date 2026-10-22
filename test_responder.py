@@ -886,9 +886,25 @@ async def subscription_checks():
         common.CLAUDE_TOKEN_FILE.unlink()
 
         no_chats = responder.SubscriptionAnswerer("system", chats_available=False, run=fake_run)
+        logged_out = Scope(reason="the owner's personal account is not logged in", private=False,
+                           current=FAMILY["id"], topic=42, deep=True,
+                           origin={"chat_id": FAMILY["id"], "topic_id": 42, "message_id": 9, "asker_id": OWNER,
+                                   "asker_name": "Олег", "photos": {"9": "AgAD-photo"}})
         outputs.append((0, result(), ""))
-        await no_chats.answer("вопрос", scope, dict(common.DEFAULT_SETTINGS))
-        check("without chat access there is no MCP config and only the web tools are allowed",
+        await no_chats.answer("вопрос", logged_out, dict(common.DEFAULT_SETTINGS))
+        check("with the owner's account logged out no chat is read, but the bot still looks at the photo it was sent, "
+              "writes into the group, sets reminders and posts pictures and files",
+              "--mcp-config" in runs[-1]["arguments"]
+              and after(runs[-1]["arguments"], "--allowedTools") == "WebSearch,WebFetch,mcp__chats__view_photo,"
+                                                                    "mcp__chats__post_message,mcp__chats__edit_bot_message,"
+                                                                    "mcp__chats__set_reminder,mcp__chats__list_reminders,"
+                                                                    "mcp__chats__cancel_reminder,mcp__chats__send_image,"
+                                                                    "mcp__chats__find_files,mcp__chats__send_file",
+              runs[-1]["arguments"])
+        outputs.append((0, result(), ""))
+        await no_chats.answer("вопрос", Scope(reason="the owner's personal account is not logged in"),
+                              dict(common.DEFAULT_SETTINGS))
+        check("a question from no chat, with no chat to read either, gets no MCP config and only the web tools",
               "--mcp-config" not in runs[-1]["arguments"]
               and after(runs[-1]["arguments"], "--allowedTools") == "WebSearch,WebFetch", runs[-1]["arguments"])
 

@@ -829,7 +829,9 @@ def no_hooks_settings(work):
 
 class SubscriptionAnswerer:
     """Claude Code answering one of the owner's questions on the owner's subscription, in an empty working directory
-    of its own, with web search and - when chats can be read - the tools of search_mcp.py for this question's scope."""
+    of its own, with web search and the tools of search_mcp.py this question's scope allows. Reading chats needs the
+    owner's personal account; writing into the group, reminders, pictures and files do not, and stay when it is
+    logged out."""
 
     def __init__(self, system, chats_available, run=None):
         self.system = system
@@ -848,20 +850,24 @@ class SubscriptionAnswerer:
                          "--strict-mcp-config", "--permission-prompts", "none", "--no-session-persistence",
                          "--disable-slash-commands", "--settings", no_hooks_settings(work),
                          "--system-prompt", self.system]
-            allowed = ["WebSearch", "WebFetch"]
-            if self.chats_available and scope.reason is None:
+            web = ["WebSearch", "WebFetch"]
+            allowed = list(web)
+            reads = self.chats_available and scope.reason is None
+            if reads:
+                allowed += ["mcp__chats__search_chats", "mcp__chats__read_chat_history", "mcp__chats__read_voice"]
+            if reads or (scope.origin or {}).get("photos"):
+                allowed += ["mcp__chats__view_photo"]
+            if scope.current is not None:
+                allowed += ["mcp__chats__post_message", "mcp__chats__edit_bot_message"]
+            if scope.origin is not None:
+                allowed += ["mcp__chats__set_reminder", "mcp__chats__list_reminders", "mcp__chats__cancel_reminder",
+                            "mcp__chats__send_image", "mcp__chats__find_files", "mcp__chats__send_file"]
+            if allowed != web:
                 (work / "scope.json").write_text(json.dumps(scope.to_dict(), ensure_ascii=False), encoding="utf-8")
                 config = {"mcpServers": {"chats": {"command": python_for_mcp(), "args": [
                     str(common.ROOT / "search_mcp.py"), "--scope", str(work / "scope.json")]}}}
                 (work / "mcp.json").write_text(json.dumps(config), encoding="utf-8")
                 arguments += ["--mcp-config", str(work / "mcp.json")]
-                allowed += ["mcp__chats__search_chats", "mcp__chats__read_chat_history", "mcp__chats__read_voice",
-                            "mcp__chats__view_photo"]
-                if scope.current is not None:
-                    allowed += ["mcp__chats__post_message", "mcp__chats__edit_bot_message"]
-                if scope.origin is not None:
-                    allowed += ["mcp__chats__set_reminder", "mcp__chats__list_reminders", "mcp__chats__cancel_reminder",
-                                "mcp__chats__send_image", "mcp__chats__find_files", "mcp__chats__send_file"]
             arguments += ["--allowedTools", ",".join(allowed)]
             code, stdout, stderr = await self.run(arguments, question, work,
                                                   {**subscription_environment(), **temporary_folder(work)})
