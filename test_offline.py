@@ -203,6 +203,8 @@ def login_checks():
     common.ME_FILE.unlink()
 
     class FakeClient:
+        authorized = True
+
         def __init__(self, session, api_id, api_hash, **options):
             self.session = SimpleNamespace(save=lambda: "SESSION")
 
@@ -211,6 +213,9 @@ def login_checks():
 
         async def disconnect(self):
             pass
+
+        async def is_user_authorized(self):
+            return self.authorized
 
         async def send_code_request(self, phone):
             return SimpleNamespace(phone_code_hash="hash")
@@ -248,6 +253,20 @@ def login_checks():
     printed = attempt(["+79990000000", "12345"], ["right"])
     check("a second attempt reuses the api_id",
           common.load_json(common.ME_FILE).get("session") == "SESSION" and "earlier attempt" in printed, printed)
+
+    real_string_session = login.StringSession
+    login.StringSession = lambda value=None: value
+    try:
+        common.save_json(common.ME_FILE, {"api_id": 1234567, "api_hash": "0123456789abcdef", "session": "OLD"})
+        printed = attempt([], [])
+        check("a session Telegram still accepts is kept",
+              common.load_json(common.ME_FILE).get("session") == "OLD" and "already logged in" in printed, printed)
+        FakeClient.authorized = False
+        printed = attempt(["+79990000000", "12345"], ["right"])
+        check("a session Telegram has ended is replaced by a new login, not refused as already logged in",
+              common.load_json(common.ME_FILE).get("session") == "SESSION" and "no longer accepts" in printed, printed)
+    finally:
+        login.StringSession, FakeClient.authorized = real_string_session, True
     common.ME_FILE.unlink()
 
 

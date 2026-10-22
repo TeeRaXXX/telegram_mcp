@@ -72,11 +72,25 @@ async def enter_password(client):
             print("Telegram says the password is wrong. Try again - the code is not needed again - or Ctrl+C to stop.")
 
 
+async def session_accepted(saved):
+    """Whether Telegram still accepts the personal account's saved session."""
+    client = saved_client(saved)
+    await client.connect()
+    try:
+        return await client.is_user_authorized()
+    finally:
+        await client.disconnect()
+
+
 def login_me():
     saved = common.load_json(common.ME_FILE) or {}
     if saved.get("session"):
-        print("The personal account is already logged in: 'login.py status' shows who, 'login.py logout me' ends it.")
-        return
+        if asyncio.run(session_accepted(saved)):
+            print("The personal account is already logged in: 'login.py status' shows who, 'login.py logout me' ends it.")
+            return
+        print("Telegram no longer accepts the saved session - it was ended, perhaps under Settings > Devices - so the "
+              "account logs in again.")
+        saved.pop("session")
     if saved.get("api_id") and saved.get("api_hash"):
         api_id, api_hash = saved["api_id"], saved["api_hash"]
         print(f"Using api_id {api_id} from the earlier attempt (delete {common.ME_FILE} to enter another).")
