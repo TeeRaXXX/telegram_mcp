@@ -3,11 +3,14 @@
 read_chat_history over the owner's Telegram chats - with no date limit, since the scope responder.py writes for these
 questions is a deep one - post_message and edit_bot_message for the bot in the group the question came from, and
 set_reminder, list_reminders and cancel_reminder for the chat it came from, and find_files and send_file for a file
-from the owner's computer to post there, all kept inside the scope written for that one question.
+from the owner's computer to post there, all kept inside the scope written for that one question - and
+search_engine_docs, read_engine_doc and query_engine_graph over the Doppel engine's documents and the graph of its code,
+all of them, as the questions here are the owner's.
 
     .venv/Scripts/python.exe search_mcp.py --scope <scope file>
 """
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -19,11 +22,13 @@ from pydantic import Field
 from telethon import utils
 
 import common
+import enginedocs
 import reminders
 from chatsearch import (EDIT_MESSAGE_DESCRIPTION, FOUND_KEPT_DEEP, HISTORY_DEEP_DESCRIPTION, HISTORY_LIMIT_DEEP,
                         POST_MESSAGE_DESCRIPTION, READ_VOICE_DESCRIPTION, SEARCH_CHATS_DEEP_DESCRIPTION,
                         SEND_IMAGE_DESCRIPTION, VIEW_PHOTO_DESCRIPTION, BotWriter, Pictures, Scope, TelegramSearch,
                         connect_personal)
+from enginedocs import QUERY_ENGINE_GRAPH_DESCRIPTION, READ_ENGINE_DOC_DESCRIPTION, SEARCH_ENGINE_DOCS_DESCRIPTION
 from localfiles import FIND_FILES_DESCRIPTION, SEND_FILE_DESCRIPTION, LocalFiles
 
 mcp = MCPServer("chats", log_level="WARNING")
@@ -189,6 +194,28 @@ async def cancel_reminder(
     reminder_id: Annotated[str, Field(description="The reminder's id from list_reminders")],
 ) -> str:
     return dump(reminders.cancel(scope().origin, reminder_id))
+
+
+@mcp.tool(description=SEARCH_ENGINE_DOCS_DESCRIPTION, structured_output=False)
+async def search_engine_docs(
+    query: Annotated[str, Field(description="One to three words to look for")],
+) -> str:
+    return dump(await asyncio.to_thread(enginedocs.search, query, True))
+
+
+@mcp.tool(description=READ_ENGINE_DOC_DESCRIPTION, structured_output=False)
+async def read_engine_doc(
+    file: Annotated[str, Field(description="The file, as search_engine_docs named it")],
+    heading: Annotated[str | None, Field(description="The section's heading; leave it out for the file's start")] = None,
+) -> str:
+    return dump(await asyncio.to_thread(enginedocs.read, file, heading, True))
+
+
+@mcp.tool(description=QUERY_ENGINE_GRAPH_DESCRIPTION, structured_output=False)
+async def query_engine_graph(
+    question: Annotated[str, Field(description="The question, in English")],
+) -> str:
+    return dump(await asyncio.to_thread(enginedocs.graph, question, True))
 
 
 if __name__ == "__main__":

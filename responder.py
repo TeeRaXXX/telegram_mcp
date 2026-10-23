@@ -3,7 +3,8 @@
 (in any Russian case), a mention of it or a reply to it from someone on its list gets an answer from Claude, who can search the web, search the chats the owner's account shares
 with the person asking, read the recent history of a chat or one of its topics, look at a photo already in a chat, set
 reminders, post or edit the bot's own messages in the group the question came from - adding to a list kept in a topic,
-say - and, for the owner alone, post a GIF or a picture from the web or a file from this computer. Everyone else is ignored before
+say - answer questions about the Doppel engine from its manual (enginedocs.py) and, for the owner alone, also from the
+engine's other documents and the graph of its code, post a GIF or a picture from the web or a file from this computer. Everyone else is ignored before
 Claude is called, so only the list spends anything.
 
 People on the list are answered through the Claude API (settings "model" and "effort"). The owner is answered by
@@ -62,7 +63,9 @@ from chatsearch import (EDIT_MESSAGE_DESCRIPTION, HISTORY_DESCRIPTION, PICTURE_B
                         READ_VOICE_DESCRIPTION, SEARCH_CHATS_DESCRIPTION, SEND_IMAGE_DESCRIPTION,
                         VIEW_PHOTO_DESCRIPTION, BotWriter, Pictures, Scope, TelegramSearch, connect_personal,
                         person_name)
+import enginedocs
 from common import addressed, message_entities, message_text, utf16_slice
+from enginedocs import QUERY_ENGINE_GRAPH_DESCRIPTION, READ_ENGINE_DOC_DESCRIPTION, SEARCH_ENGINE_DOCS_DESCRIPTION
 from localfiles import FIND_FILES_DESCRIPTION, SEND_FILE_DESCRIPTION, LocalFiles
 
 try:
@@ -132,6 +135,11 @@ When the person asking wants something written into the group - an item added to
 it with post_message or edit_bot_message, in that group only. A message someone else wrote cannot be edited: to add \
 to their list, read the list, then post the whole updated list, in the same style, as a new message in its topic; a \
 list the bot posted itself, edit. Then say briefly in the answer what you wrote and where.
+
+When the question is about Doppel - {owner_name}'s game engine and its editor - find the answer with \
+search_engine_docs and read the section with read_engine_doc before answering, answer from what the documentation \
+says and name the page; when query_engine_graph is among your tools and the question is about how the code is built, \
+ask the graph too. When the documentation does not cover it, say so rather than guess.
 
 When someone wants to be reminded of something later, or wants someone in the chat reminded later, set a reminder \
 with set_reminder - minutes_from_now for "in two hours", at for a date and time, counted from when the question was \
@@ -295,6 +303,42 @@ SEND_FILE = {
     },
 }
 
+SEARCH_ENGINE_DOCS = {
+    "name": "search_engine_docs",
+    "description": SEARCH_ENGINE_DOCS_DESCRIPTION,
+    "input_schema": {
+        "type": "object",
+        "properties": {"query": {"type": "string", "description": "One to three words to look for"}},
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+}
+
+READ_ENGINE_DOC = {
+    "name": "read_engine_doc",
+    "description": READ_ENGINE_DOC_DESCRIPTION,
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "file": {"type": "string", "description": "The file, as search_engine_docs named it"},
+            "heading": {"type": "string", "description": "The section's heading; leave it out for the file's start"},
+        },
+        "required": ["file"],
+        "additionalProperties": False,
+    },
+}
+
+QUERY_ENGINE_GRAPH = {
+    "name": "query_engine_graph",
+    "description": QUERY_ENGINE_GRAPH_DESCRIPTION,
+    "input_schema": {
+        "type": "object",
+        "properties": {"question": {"type": "string", "description": "The question, in English"}},
+        "required": ["question"],
+        "additionalProperties": False,
+    },
+}
+
 READ_VOICE = {
     "name": "read_voice",
     "description": READ_VOICE_DESCRIPTION,
@@ -324,6 +368,8 @@ HELP = """\
 Могу найти файл у тебя на компьютере и прислать его в чат - тоже только по твоей просьбе.
 Слышу голосовые и кружочки: их расшифровывает Telegram Premium твоего аккаунта.
 #simple, #medium или #hard в твоём вопросе выбирают модель: Sonnet, Opus или Fable.
+Отвечаю на вопросы про движок Doppel по его руководству - всем, кто в списке; тебе ещё по остальной документации и \
+графу кода.
 
 В личке с кем угодно напиши {bot} и вопрос, выбери подсказку - и мой ответ появится прямо там. Так спрашивать \
 можешь только ты."""
@@ -558,6 +604,10 @@ def add_tokens(totals, usage):
     totals["web_searches"] += getattr(getattr(usage, "server_tool_use", None), "web_search_requests", None) or 0
 
 
+def owner_asks(scope):
+    return scope.origin is not None and scope.origin.get("asker_id") == common.load_access()["owner_id"]
+
+
 def tool_content(found):
     """A tool's result as Claude gets it: JSON text, with a photo to look at as an image block before it."""
     if "data" not in found:
@@ -593,11 +643,13 @@ class Answerer:
             tools += [POST_MESSAGE, EDIT_BOT_MESSAGE]
         if scope.origin is not None:
             tools += [SET_REMINDER, LIST_REMINDERS, CANCEL_REMINDER]
-        if scope.origin is not None and scope.origin.get("asker_id") == common.load_access()["owner_id"]:
+        if owner_asks(scope):
             if self.pictures is not None:
                 tools += [SEND_IMAGE]
             if self.files is not None:
                 tools += [FIND_FILES, SEND_FILE]
+        if enginedocs.available():
+            tools += [SEARCH_ENGINE_DOCS, READ_ENGINE_DOC] + ([QUERY_ENGINE_GRAPH] if owner_asks(scope) else [])
         messages = [{"role": "user", "content": question}]
         totals = dict.fromkeys((*TOKEN_FIELDS, "web_searches"), 0)
         for _ in range(MAX_STEPS):
@@ -675,6 +727,13 @@ class Answerer:
             elif self.files is not None and block.name == "send_file":
                 found = await self.files.send(scope, str(given.get("path") or ""), str(given.get("caption") or ""))
                 log(f"file for {(scope.origin or {}).get('asker_name')}: {found}")
+            elif block.name == "search_engine_docs":
+                found = await asyncio.to_thread(enginedocs.search, str(given.get("query") or ""), owner_asks(scope))
+            elif block.name == "read_engine_doc":
+                found = await asyncio.to_thread(enginedocs.read, str(given.get("file") or ""),
+                                                str(given.get("heading") or ""), owner_asks(scope))
+            elif block.name == "query_engine_graph":
+                found = await asyncio.to_thread(enginedocs.graph, str(given.get("question") or ""), owner_asks(scope))
             else:
                 found = {"error": f"there is no tool called {block.name}"}
             results.append({"type": "tool_result", "tool_use_id": block.id, "is_error": "error" in found,
@@ -862,6 +921,9 @@ class SubscriptionAnswerer:
             if scope.origin is not None:
                 allowed += ["mcp__chats__set_reminder", "mcp__chats__list_reminders", "mcp__chats__cancel_reminder",
                             "mcp__chats__send_image", "mcp__chats__find_files", "mcp__chats__send_file"]
+            if enginedocs.available():
+                allowed += ["mcp__chats__search_engine_docs", "mcp__chats__read_engine_doc",
+                            "mcp__chats__query_engine_graph"]
             if allowed != web:
                 (work / "scope.json").write_text(json.dumps(scope.to_dict(), ensure_ascii=False), encoding="utf-8")
                 config = {"mcpServers": {"chats": {"command": python_for_mcp(), "args": [

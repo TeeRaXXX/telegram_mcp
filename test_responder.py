@@ -39,7 +39,12 @@ import chatsearch  # noqa: E402
 import reminders  # noqa: E402
 import session_report  # noqa: E402
 import localfiles  # noqa: E402
+import enginedocs  # noqa: E402
+import search_mcp  # noqa: E402
 from chatsearch import BotWriter, Pictures, Scope, TelegramSearch  # noqa: E402
+
+# No engine documentation unless engine_checks lays some out, so the tools every other check expects stay as they were.
+enginedocs.DOPPEL = TEMP / "doppel"
 from mcp.server.mcpserver.exceptions import ToolError  # noqa: E402
 from telethon import functions, types  # noqa: E402
 
@@ -1637,6 +1642,117 @@ async def file_checks():
     check("someone else's question gets neither", "find_files" not in names and "send_file" not in names, names)
 
 
+async def engine_checks():
+    common.save_json(common.ACCESS_FILE, {"owner_id": OWNER, "allowed": {str(MASHA): {"name": "Маша"}}})
+    docs = enginedocs.DOPPEL / "docs"
+    layout = {
+        "manual/en/lighting.md": "# Lighting\n\nLights and air.\n\n## Fog volumes {#fog-volumes}\n\nA **Fog volume** gives a "
+                                 "place air of its own.\n\n### Presets\n\nGround mist, Bank, Wisps, Haze.\n\n```\n# not a "
+                                 "heading: fog\n```\n\n## Wind\n\nThe wind sways foliage.\n",
+        "manual/ru/lighting.md": "# Освещение\n\n## Области тумана {#fog-volumes}\n\nКомпонент **Fog volume** даёт месту "
+                                 "собственный туман.\n",
+        "FOG-VOLUMES-2026-10.md": "# Fog volumes study\n\n## 1. Short version\n\nfog fog fog fog fog volume, the plan.\n",
+    }
+    for name, text in layout.items():
+        (docs / name).parent.mkdir(parents=True, exist_ok=True)
+        (docs / name).write_text(text, encoding="utf-8")
+    graph_dir = enginedocs.DOPPEL / "graphify-out"
+    graph_dir.mkdir(parents=True, exist_ok=True)
+    (graph_dir / "graph.json").write_text("{}", encoding="utf-8")
+
+    found = enginedocs.search("FOG", owner=False)
+    check("anyone's search finds the manual's sections in both languages by a word in any case, the most mentions "
+          "first - never another document, and never a line inside a code block as a heading",
+          [(item["file"], item["heading"]) for item in found["found"]]
+          == [("manual/en/lighting.md", "Fog volumes"), ("manual/ru/lighting.md", "Области тумана"),
+              ("manual/en/lighting.md", "Presets")]
+          and "Fog volume" in found["found"][0]["excerpt"], found)
+    found = enginedocs.search("fog", owner=True)
+    check("the owner's search finds the other documents too, after the manual's",
+          [item["file"] for item in found["found"]] == ["manual/en/lighting.md", "manual/ru/lighting.md",
+                                                        "manual/en/lighting.md", "FOG-VOLUMES-2026-10.md",
+                                                        "FOG-VOLUMES-2026-10.md"], found)
+    check("a word may list alternatives with |, and every word must be in the section",
+          [item["heading"] for item in enginedocs.search("туман|haze", owner=False)["found"]]
+          == ["Области тумана", "Presets"]
+          and enginedocs.search("fog wind", owner=False)["found"] == [])
+    section = enginedocs.read("manual/en/lighting.md", "fog volumes", owner=False)
+    check("a section is read by its heading with the sections under it, and stops at the next of its level",
+          section["heading"] == "Fog volumes" and "Ground mist" in section["text"] and "sways" not in section["text"]
+          and not section["cut"], section)
+    check("without a heading a file is read from its start",
+          enginedocs.read("manual/ru/lighting.md", "", owner=False)["text"].startswith("# Освещение"))
+    refusals = {"study": enginedocs.read("FOG-VOLUMES-2026-10.md", None, owner=False),
+                "outside": enginedocs.read("../CLAUDE.md", None, owner=True),
+                "no heading": enginedocs.read("manual/en/lighting.md", "Rain", owner=False),
+                "graph": enginedocs.graph("how is fog drawn", owner=False),
+                "empty": enginedocs.search("  ", owner=False)}
+    check("someone else reads no study, nobody reads outside docs/, a missing heading lists the headings, the graph "
+          "is the owner's alone and a search needs a word",
+          all("error" in result for result in refusals.values()) and "Wind" in refusals["no heading"]["headings"],
+          refusals)
+    check("the owner reads a study", "the plan" in enginedocs.read("FOG-VOLUMES-2026-10.md", None, owner=True)["text"])
+
+    real_command = enginedocs.graph_command
+    enginedocs.graph_command = lambda question: [sys.executable, "-c", f"print('NODE Fog for', {question!r})"]
+    try:
+        asked = enginedocs.graph("how is fog drawn", owner=True)
+        check("the owner's question reaches the graph and its answer comes back",
+              asked == {"graph": "NODE Fog for how is fog drawn"}, asked)
+        mcp_asked = json.loads(await search_mcp.query_engine_graph(question="fog"))
+        check("the subscription's MCP tools are the owner's: the studies and the graph",
+              mcp_asked == {"graph": "NODE Fog for fog"}
+              and json.loads(await search_mcp.search_engine_docs(query="plan"))["found"][0]["file"]
+              == "FOG-VOLUMES-2026-10.md", mcp_asked)
+    finally:
+        enginedocs.graph_command = real_command
+
+    owner_origin = {"chat_id": FAMILY["id"], "topic_id": 42, "message_id": 700, "asker_id": OWNER, "asker_name": "Олег"}
+    owner_here = Scope(everything=True, private=False, current=FAMILY["id"], origin=owner_origin)
+    masha_here = Scope(chats={FAMILY["id"]: "Семья"}, private=False, current=FAMILY["id"],
+                       origin={**owner_origin, "asker_id": MASHA, "asker_name": "Маша"})
+    asks = FakeMessages([
+        reply("tool_use", block(type="tool_use", id="e1", name="search_engine_docs", input={"query": "fog"}),
+              block(type="tool_use", id="e2", name="read_engine_doc",
+                    input={"file": "FOG-VOLUMES-2026-10.md", "heading": "Short version"})),
+        reply("end_turn", block(type="text", text="Туман рисуется так."))])
+    await responder.Answerer(SimpleNamespace(beta=SimpleNamespace(messages=asks)), RecordingSearch(), "system").answer(
+        "как устроен туман", owner_here, dict(common.DEFAULT_SETTINGS))
+    names = [tool["name"] for tool in asks.calls[0]["tools"]]
+    results = [part for part in asks.calls[1]["messages"][-1]["content"] if part["type"] == "tool_result"]
+    check("the owner's question gets the documents and the graph, and Claude's calls reach the studies",
+          names[-3:] == ["search_engine_docs", "read_engine_doc", "query_engine_graph"]
+          and not any(result["is_error"] for result in results) and "the plan" in results[1]["content"],
+          (names, results))
+    masha_asks = FakeMessages([
+        reply("tool_use", block(type="tool_use", id="m1", name="read_engine_doc", input={"file": "FOG-VOLUMES-2026-10.md"}),
+              block(type="tool_use", id="m2", name="query_engine_graph", input={"question": "fog"})),
+        reply("end_turn", block(type="text", text="ok"))])
+    await responder.Answerer(SimpleNamespace(beta=SimpleNamespace(messages=masha_asks)), RecordingSearch(),
+                             "system").answer("как устроен туман", masha_here, dict(common.DEFAULT_SETTINGS))
+    names = [tool["name"] for tool in masha_asks.calls[0]["tools"]]
+    results = [part for part in masha_asks.calls[1]["messages"][-1]["content"] if part["type"] == "tool_result"]
+    check("someone else's question gets the manual's search and reading but no graph, and a study or the graph asked "
+          "for anyway is refused",
+          names[-2:] == ["search_engine_docs", "read_engine_doc"] and "query_engine_graph" not in names
+          and all(result["is_error"] for result in results), (names, results))
+
+    runs = []
+
+    async def fake_run(arguments, question, work, environment):
+        runs.append(arguments)
+        return 0, json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": "ok",
+                              "usage": {}}), ""
+
+    await responder.SubscriptionAnswerer("system", chats_available=False, run=fake_run).answer(
+        "вопрос", Scope(reason="the owner's personal account is not logged in"), dict(common.DEFAULT_SETTINGS))
+    allowed = runs[-1][runs[-1].index("--allowedTools") + 1]
+    check("on the subscription the owner's question gets the documents and the graph, even from no chat",
+          allowed == "WebSearch,WebFetch,mcp__chats__search_engine_docs,mcp__chats__read_engine_doc,"
+                     "mcp__chats__query_engine_graph" and "--mcp-config" in runs[-1], runs[-1])
+    enginedocs.DOPPEL = TEMP / "no-doppel"
+
+
 class VoiceScopes(FakeScopes):
     """FakeScopes that also transcribe voice messages, from a table of what each one says."""
 
@@ -1750,6 +1866,7 @@ async def main():
     await reminder_checks()
     await picture_checks()
     await file_checks()
+    await engine_checks()
     await voice_checks()
     await report_checks()
     await sdk_checks()

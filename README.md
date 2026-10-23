@@ -94,7 +94,14 @@ the bot itself, without Claude, so looking through the chat costs nothing. Every
   Pictures, Videos, Music and OneDrive folders and every local drive but the system one, shallow folders first, for
   at most 20 seconds a search. Whatever may keep logins or keys is never listed or sent: a folder or file whose name
   starts with a dot or `$`, `AppData`, Telegram Desktop's `tdata`, this project's own folder, key and session files
-  (`.pem`, `.key`, `.pfx`, `.kdbx`, `.session`, `id_rsa`...). Every file sent is written down in `data\files_sent.log`.
+  (`.pem`, `.key`, `.pfx`, `.kdbx`, `.session`, `id_rsa`...). Every file sent is written down in `data\files_sent.log`;
+- `search_engine_docs` and `read_engine_doc`: answer a question about the Doppel engine from its documentation in
+  `G:\doppel\docs` (`enginedocs.DOPPEL`). Everyone on the list reads the manual, `docs\manual` in English and Russian;
+  you also read the rest of `docs\` - the studies, plans and `SETUP.md`. A search returns the Markdown sections that
+  hold every word given, the manual's first; a section is read by its heading;
+- `query_engine_graph`, for your questions only: ask the graphify graph of the engine's code
+  (`G:\doppel\graphify-out\graph.json`, through `graphify query` with the interpreter `graphify-out\.graphify_python`
+  names) which classes, functions and files a question touches. It is only as fresh as the last `/graphify --update`.
 
 Asked in a group, one-on-one chats stay out of reach, since the whole group reads the answer.
 
